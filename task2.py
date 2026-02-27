@@ -64,6 +64,8 @@ class OutputWriterHtml(OutputWriter):
     HTML_TEMPLATE = """
     <html>
     <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
         <title>Ping results</title>
         <style>
             html, body {
