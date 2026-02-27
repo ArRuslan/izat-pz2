@@ -1,10 +1,62 @@
+import os.path
 import time
+import xml.etree.ElementTree as ET
+from abc import ABC, abstractmethod
+from datetime import datetime
 from threading import Thread
-from typing import TypeVar, Generic, Callable
+from typing import TypeVar, Generic, Callable, Literal
 from urllib.parse import urlparse
 
 import click
 import ping3
+
+T = TypeVar("T")
+SUPPORTED_FORMATS = ("txt", "xml", "html")
+TIME_FORMAT = "%d.%m.%Y at %H:%M:%S"
+
+
+class OutputWriter(ABC):
+    @abstractmethod
+    def write_ping_result(self, host: str, ping: float, ping_time: datetime | None = None) -> None:
+        ...
+
+
+class OutputWriterTxt(OutputWriter):
+    def __init__(self, file_path: str) -> None:
+        self._file_path = file_path
+
+    def write_ping_result(self, host: str, ping: float, ping_time: datetime | None = None) -> None:
+        if ping_time is None:
+            ping_time = datetime.now()
+
+        with open(self._file_path, "a", encoding="utf8") as f:
+            f.write(f"Ping to {host!r} on {ping_time.strftime(TIME_FORMAT)} is {ping * 1000:.3f}ms\n")
+
+
+class OutputWriterXml(OutputWriter):
+    def __init__(self, file_path: str) -> None:
+        self._file_path = file_path
+
+    def write_ping_result(self, host: str, ping: float, ping_time: datetime | None = None) -> None:
+        if ping_time is None:
+            ping_time = datetime.now()
+
+        if os.path.exists(self._file_path):
+            tree = ET.parse(self._file_path)
+        else:
+            tree = ET.ElementTree(ET.Element("PingResults"))
+
+        root = tree.getroot()
+        result = ET.SubElement(root, "PingResult")
+        result_host = ET.SubElement(result, "Host")
+        result_time = ET.SubElement(result, "Time")
+        result_ping = ET.SubElement(result, "Ping")
+
+        result_host.text = host
+        result_time.text = ping_time.isoformat()
+        result_ping.text = f"{ping * 1000}"
+
+        tree.write(self._file_path)
 
 
 def validate_hosts_args(ctx: click.Context, _: click.Option, value: str) -> str:
@@ -24,7 +76,11 @@ def validate_gte_1(_ctx: click.Context, option: click.Option, value: int) -> int
     return value
 
 
-T = TypeVar("T")
+def validate_format(_ctx: click.Context, option: click.Option, value: str) -> str:
+    value = value.lower()
+    if value not in ("txt", "xml", "html"):
+        raise click.UsageError(f"\"{option.opts[0]}\" must be one of: {', '.join(SUPPORTED_FORMATS)}")
+    return value
 
 
 class ThreadWithResult(Thread, Generic[T]):
@@ -52,8 +108,12 @@ def _ping_thread(host: str, count: int) -> float:
     return sum(pings) / len(pings)
 
 
-def _run_pings(hosts: list[str], count: int, interval: int) -> None:
+def _run_pings(
+        hosts: list[str], count: int, interval: int, output_writer: OutputWriter | None, quiet: bool,
+) -> None:
     while True:
+        time_now = datetime.now()
+
         threads = []
         for host in hosts:
             thread = ThreadWithResult(target=_ping_thread, args=(host, count))
@@ -62,9 +122,13 @@ def _run_pings(hosts: list[str], count: int, interval: int) -> None:
 
         for host, thread in zip(hosts, threads):
             result = thread.join()
-            print(f"Ping to \"{host}\": {result*1000:.2f}ms")
+            if output_writer is not None:
+                output_writer.write_ping_result(host, result, time_now)
+            if not quiet:
+                print(f"[{time_now.strftime(TIME_FORMAT)}] Ping to \"{host}\": {result*1000:.2f}ms")
 
-        print("-" * 32)
+        if not quiet:
+            print("-" * 48)
 
         time.sleep(interval)
 
@@ -74,7 +138,13 @@ def _run_pings(hosts: list[str], count: int, interval: int) -> None:
 @click.option("--hosts-file", "-f", type=click.STRING, required=False, callback=validate_hosts_args)
 @click.option("--ping-count", "-c", type=click.INT, required=True, default=5, callback=validate_gte_1)
 @click.option("--interval", "-i", type=click.INT, required=True, default=60, callback=validate_gte_1)
-def main(host: tuple[str] | None, hosts_file: str | None, ping_count: int, interval: int) -> None:
+@click.option("--output", "-o", type=click.STRING, required=False)
+@click.option("--output-format", "-t", type=click.STRING, required=True, default="txt", callback=validate_format)
+@click.option("--quiet", "-q", is_flag=True, default=False)
+def main(
+        host: tuple[str] | None, hosts_file: str | None, ping_count: int, interval: int, output: str | None,
+        output_format: Literal["txt", "xml", "html"], quiet: bool,
+) -> None:
     if hosts_file:
         with open(hosts_file) as f:
             host = f.read().splitlines()
@@ -87,7 +157,13 @@ def main(host: tuple[str] | None, hosts_file: str | None, ping_count: int, inter
         else:
             hosts.append(parsed.netloc)
 
-    _run_pings(hosts, ping_count, interval)
+    writer = None
+    if output is not None and output_format == "txt":
+        writer = OutputWriterTxt(output)
+    elif output is not None and output_format == "xml":
+        writer = OutputWriterXml(output)
+
+    _run_pings(hosts, ping_count, interval, writer, quiet)
 
 
 if __name__ == "__main__":
