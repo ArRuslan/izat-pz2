@@ -4,7 +4,9 @@ version = "0.1.0"
 description = "Add your description here"
 requires-python = ">=3.11"
 dependencies = [
+    "beautifulsoup4>=4.14.3",
     "click>=8.3.1",
+    "lxml>=6.0.2",
     "openpyxl>=3.1.5",
     "ping3>=5.1.5",
 ]

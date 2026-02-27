@@ -9,6 +9,7 @@ from urllib.parse import urlparse
 
 import click
 import ping3
+from bs4 import BeautifulSoup
 
 T = TypeVar("T")
 SUPPORTED_FORMATS = ("txt", "xml", "html")
@@ -57,6 +58,71 @@ class OutputWriterXml(OutputWriter):
         result_ping.text = f"{ping * 1000}"
 
         tree.write(self._file_path)
+
+
+class OutputWriterHtml(OutputWriter):
+    HTML_TEMPLATE = """
+    <html>
+    <head>
+        <title>Ping results</title>
+        <style>
+            html, body {
+                width: 100%;
+                height: 100%;
+                margin: 0;
+            }
+            
+            #output-table {
+                width: 100%;
+            }
+            
+            #output-table, th, td {
+                border: 1px solid black;
+            }
+        </style>
+    </head>
+    <body>
+        <table id=\"output-table\">
+            <tr>
+                <th>Time</th>
+                <th>Host</th>
+                <th>Ping (ms)</th>
+            </tr>
+        </table>
+    </body>
+    </html>
+    """
+
+    def __init__(self, file_path: str) -> None:
+        self._file_path = file_path
+
+    def write_ping_result(self, host: str, ping: float, ping_time: datetime | None = None) -> None:
+        if ping_time is None:
+            ping_time = datetime.now()
+
+        if os.path.exists(self._file_path):
+            with open(self._file_path, "r", encoding="utf8") as f:
+                html = BeautifulSoup(f.read(), "lxml")
+        else:
+            html = BeautifulSoup(self.HTML_TEMPLATE, "lxml")
+
+        table = html.find("table", {"id": "output-table"})
+
+        row = html.new_tag("tr")
+        cell_host = html.new_tag("td")
+        cell_time = html.new_tag("td")
+        cell_ping = html.new_tag("td")
+        row.append(cell_host)
+        row.append(cell_time)
+        row.append(cell_ping)
+        table.append(row)
+
+        cell_host.string = host
+        cell_time.string = ping_time.strftime(TIME_FORMAT)
+        cell_ping.string = f"{ping * 1000:.3f}"
+
+        with open(self._file_path, "w", encoding="utf8") as f:
+            f.write(str(html))
 
 
 def validate_hosts_args(ctx: click.Context, _: click.Option, value: str) -> str:
@@ -162,6 +228,8 @@ def main(
         writer = OutputWriterTxt(output)
     elif output is not None and output_format == "xml":
         writer = OutputWriterXml(output)
+    elif output is not None and output_format == "html":
+        writer = OutputWriterHtml(output)
 
     _run_pings(hosts, ping_count, interval, writer, quiet)
 
