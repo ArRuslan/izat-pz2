@@ -1,6 +1,12 @@
+from pathlib import Path
+
+import click
 from openpyxl import load_workbook
 from openpyxl.cell import Cell
 from openpyxl.styles import PatternFill
+
+PATH_PARAM = click.Path(readable=True, resolve_path=True, dir_okay=False)
+PATH_PARAM_EXISTS = click.Path(exists=True, readable=True, resolve_path=True, dir_okay=False)
 
 green = "8000FF00"
 blue = "800000FF"
@@ -39,15 +45,18 @@ def _process_cell(cell: Cell) -> None:
         cell.fill = fill_green
 
 
-def main():
-    wb = load_workbook("pz1.xlsx")
+@click.command()
+@click.option("--input-file", "-i", type=PATH_PARAM_EXISTS, required=True)
+@click.option("--output-file", "-o", type=PATH_PARAM, required=True)
+def main(input_file: Path, output_file: Path) -> None:
+    wb = load_workbook(input_file)
     ws = wb.active
 
     for row in ws:
         for col in row:
             _process_cell(col)
 
-    wb.save("pz1-processed.xlsx")
+    wb.save(output_file)
 
 
 if __name__ == "__main__":
